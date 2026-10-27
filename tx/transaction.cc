@@ -149,6 +149,12 @@ const IntList* Tx::read_out_neighbourhood(uint32_t node_id) {
   return storage_->get_out_relationships(node_id);
 }
 
+const IntList* Tx::read_in_neighbourhood(uint32_t node_id) {
+  protocol_->reserve_read(read_set_, new_key(), ResourceType::NODE_RELATIONSHIPS,
+                          node_id);
+  return storage_->get_in_relationships(node_id);
+}
+
 Node* Tx::prepare_update_node(uint32_t node_id) {
   protocol_->reserve_write(write_set_, new_key(), ResourceType::NODE, node_id);
   return storage_->get_node(node_id, track_accesses_);

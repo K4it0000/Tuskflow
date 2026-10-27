@@ -124,6 +124,9 @@ public:
     return node;
   }
 
+  Relationship* get_relationship(uint32_t rel_id) {
+    return get_relationship(rel_id, track_metadata_ && track_access_draw());
+  }
   Relationship* get_relationship(uint32_t rel_id, bool track_access) {
     Relationship* rel = rels_.get(rel_id);
     if (track_metadata_ && rel != nullptr && track_access) {
@@ -164,6 +167,10 @@ public:
 
   MetadataStore& metadata() { return metadata_; }
   uint32_t node_count() const { return nodes_.size(); }
+  // Array sizes: the capacities given at construction, rounded up to a power
+  // of two (as the original's AtomicObjectArray).
+  uint32_t node_capacity() const { return nodes_.capacity(); }
+  uint32_t rel_capacity() const { return rels_.capacity(); }
   uint32_t rel_count() const { return rels_.size(); }
   int tracking_threshold() const { return tracking_threshold_; }
   bool track_metadata() const { return track_metadata_; }

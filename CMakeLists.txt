@@ -57,6 +57,7 @@ add_executable(tuskflow.exe
   runtime/database.cc
   runtime/query_manager.cc
   runtime/worker.cc
+  storage/ldbc_loader.cc
   storage/random_loader.cc
   tx/mammoth_tx.cc
   tx/short_tx.cc

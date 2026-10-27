@@ -46,6 +46,27 @@ private:
   }
 };
 
+// LabelStore: label name -> id, ids from 0 in order of first use.  As with
+// PropertyStore, all names are registered by the loader before the run.
+// Deviation: the original's getLabels() maps each id back to its name and
+// the transactions compare strings; here they compare ids.
+class LabelStore {
+public:
+  static int get_mapping(const std::string& label) {
+    auto& names = table();
+    for (size_t i = 0; i < names.size(); ++i)
+      if (names[i] == label) return static_cast<int>(i);
+    names.push_back(label);  // only reached during single-threaded set-up
+    return static_cast<int>(names.size() - 1);
+  }
+
+private:
+  static std::vector<std::string>& table() {
+    static std::vector<std::string> names;
+    return names;
+  }
+};
+
 // Property: immutable (type, id, value).  The original also boxes the value
 // (java.lang.Long); here the value is stored inline.
 struct Property {
@@ -119,7 +140,7 @@ private:
 };
 
 // LabelMap: parallel int[] / boolean[] arrays (empty for the random graph,
-// but allocated as in the original).
+// but allocated as in the original; one label per node for LDBC).
 class LabelMap {
 public:
   LabelMap() : label_ids_(new int[0]), present_(new bool[0]) {}
@@ -202,6 +223,10 @@ public:
   void remove_property(int property_id) {
     properties_->put(new Property{PropertyType::NULLV, property_id, 0});
   }
+
+  void add_label(int label_id) { labels_->put(label_id, true); }
+  // getLabels().get(0) as a label id; -1 without labels.
+  int first_label() const { return labels_->size() > 0 ? labels_->id(0) : -1; }
 
   int64_t id() const { return node_id_; }
   const PropertyMap& properties() const { return *properties_; }

@@ -4,6 +4,8 @@
 
 #include <gflags/gflags.h>
 
+DECLARE_string(dataset);
+DECLARE_string(ldbc_path);
 DECLARE_uint64(nodes);
 DECLARE_uint64(rels);
 DECLARE_uint64(seed);

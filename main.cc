@@ -1,8 +1,8 @@
 // TuskFlow, C++ port of the original Java prototype for the random-graph
-// workload.  This file is
-// PrototypeBenchmark: it loads the graph, starts the database (manager,
-// workers, monitor) and the clients, runs the experiment and prints the
-// results.  The rest follows the original class by class; see README_ja.md
+// and LDBC workloads.
+// This file is PrototypeBenchmark: it loads the graph, starts the database
+// (manager, workers, monitor) and the clients, runs the experiment and prints
+// the results.  The rest follows the original class by class; see README_ja.md
 // for the map from paper Algorithm 1 and from the Java classes to the files.
 
 #include <gflags/gflags.h>
@@ -31,6 +31,7 @@
 #include "runtime/query_manager.hh"
 #include "runtime/worker.hh"
 #include "storage/graph_storage.hh"
+#include "storage/ldbc_loader.hh"
 #include "storage/random_loader.hh"
 #include "tx/short_tx.hh"
 #include "tx/task.hh"
@@ -52,9 +53,12 @@ int run_benchmark() {
     g_tsc_ghz = static_cast<double>(c1 - c0) / ns;
   }
   set_tracking_threshold(static_cast<int>(FLAGS_tracking_threshold));
-  if (FLAGS_nodes < 2 || FLAGS_nodes > FLAGS_node_capacity ||
-      FLAGS_rels > FLAGS_rel_capacity || FLAGS_hops < 1 ||
-      FLAGS_hops >= FLAGS_ops || FLAGS_read_ratio > 100) {
+  const bool ldbc = FLAGS_dataset == "ldbc";
+  if ((!ldbc && FLAGS_dataset != "random") ||
+      (ldbc && FLAGS_ldbc_path.empty()) ||
+      (!ldbc && (FLAGS_nodes < 2 || FLAGS_nodes > FLAGS_node_capacity ||
+                 FLAGS_rels > FLAGS_rel_capacity)) ||
+      FLAGS_hops < 1 || FLAGS_hops >= FLAGS_ops || FLAGS_read_ratio > 100) {
     std::fprintf(stderr, "invalid arguments\n");
     return 1;
   }
@@ -63,9 +67,16 @@ int run_benchmark() {
                              : std::max(1u, std::thread::hardware_concurrency());
   PropertyStore::get_mapping(kPropertyKey);  // register names up front
   PropertyStore::get_mapping(kNewPropertyKey);
+  PropertyStore::get_mapping(kLikesKey);
   TaskPool::init();
 
-  std::printf("#nodes:\t%" PRIu64 "\n#rels:\t%" PRIu64 "\n#workers:\t%zu\n"
+  std::printf("#dataset:\t%s\n", FLAGS_dataset.c_str());
+  if (ldbc)
+    std::printf("#ldbc_path:\t%s\n", FLAGS_ldbc_path.c_str());
+  else
+    std::printf("#nodes:\t%" PRIu64 "\n#rels:\t%" PRIu64 "\n", FLAGS_nodes,
+                FLAGS_rels);
+  std::printf("#workers:\t%zu\n"
               "#clients:\t%" PRIu64 "\n#client_tx_per_sec:\t%" PRIu64 "\n"
               "#read_ratio:\t%" PRIu64 "\n#ops:\t%" PRIu64 "\n#hops:\t%" PRIu64
               "\n#use_zipf:\t%d\n#epoch_size:\t%" PRIu64 "\n#start_lr:\t%d\n"
@@ -74,7 +85,7 @@ int run_benchmark() {
               "#tag_optimization:\t%d\n#track_metadata:\t%d\n"
               "#tracking_threshold:\t%" PRIu64 "\n#fix_getnext_race:\t%d\n"
               "#fix_mode_switch_race:\t%d\n",
-              FLAGS_nodes, FLAGS_rels, workers, FLAGS_clients,
+              workers, FLAGS_clients,
               FLAGS_client_tx_per_sec, FLAGS_read_ratio, FLAGS_ops, FLAGS_hops,
               FLAGS_use_zipf, FLAGS_epoch_size, FLAGS_start_lr, FLAGS_lr_budget,
               FLAGS_lr_delay_ms, FLAGS_duration_ms, FLAGS_reordering,
@@ -94,19 +105,30 @@ int run_benchmark() {
               FLAGS_reordering ? "an optimized" : "a regular",
               FLAGS_tag_optimization ? "with" : "without");
 
-  // BenchmarkUtils.populateDatabase with RandomLoader.
+  // BenchmarkUtils.populateDatabase with RandomLoader or LdbcLoader.
   auto load_t0 = std::chrono::steady_clock::now();
-  const uint32_t n = static_cast<uint32_t>(FLAGS_nodes);
-  std::vector<int32_t> mappings =
-      load_random_graph(storage, n, FLAGS_rels, FLAGS_seed);
+  uint32_t n = static_cast<uint32_t>(FLAGS_nodes);
+  std::vector<int32_t> mappings;
+  LdbcGraph ldbc_graph;
+  if (ldbc) {
+    ldbc_graph = load_ldbc_graph(storage, FLAGS_ldbc_path);
+    n = ldbc_graph.number_of_nodes;
+  } else {
+    mappings = load_random_graph(storage, n, FLAGS_rels, FLAGS_seed);
+  }
   double load_ms = std::chrono::duration<double, std::milli>(
                        std::chrono::steady_clock::now() - load_t0)
                        .count();
-  std::printf("[DBG] Dataset Random with %.3fM nodes and %.3fM relationships "
+  std::printf("[DBG] Dataset %s with %.3fM nodes and %.3fM relationships "
               "(avg degree %.1f) loaded in %.0f ms; RSS %.2f GB\n",
-              storage->node_count() / 1e6, storage->rel_count() / 1e6,
+              ldbc ? "LDBC" : "Random", storage->node_count() / 1e6,
+              storage->rel_count() / 1e6,
               storage->metadata().average_degree(), load_ms,
               rss_bytes() / 1e9);
+  if (ldbc)
+    std::printf("[DBG] LDBC: %u persons, %" PRIu64 " posts, %" PRIu64
+                " comments\n", ldbc_graph.number_of_persons,
+                ldbc_graph.number_of_posts, ldbc_graph.number_of_comments);
   std::fflush(stdout);
 
   if (!FLAGS_ser_log.empty()) {
@@ -115,6 +137,12 @@ int run_benchmark() {
   }
   ShortTxConfig cfg{n, &mappings, static_cast<int>(FLAGS_ops),
                     static_cast<int>(FLAGS_hops), FLAGS_use_zipf};
+  if (ldbc) {  // start from the Persons (personMappingsForZipf)
+    cfg.number_of_nodes = ldbc_graph.number_of_persons;
+    cfg.mappings = &ldbc_graph.person_mappings;
+    cfg.ldbc = &ldbc_graph;
+    cfg.first_node = static_cast<uint32_t>(ldbc_graph.range_first[kPersonType]);
+  }
   std::atomic<bool> db_running{true};
   std::atomic<bool> bench_running{false};
   auto* locks = new ForsetiLockManager();
@@ -283,11 +311,11 @@ int run_benchmark() {
 
   if (!FLAGS_epoch_log.empty()) {
     std::ofstream out(FLAGS_epoch_log);
-    out << "epoch\tt_s\tcount\tphase1_ms\tphase2_ms\tlr\n";
+    out << "epoch\tt_s\tcount\tphase1_ms\tphase2_ms\tlr\tretries\n";
     for (const auto& e : manager.epoch_log())
       out << e.epoch << '\t' << (e.t_ms - exp_t0_ms) / 1000.0 << '\t'
           << e.count << '\t' << e.phase1_ms << '\t' << e.phase2_ms << '\t'
-          << (e.lr_active ? 1 : 0) << '\n';
+          << (e.lr_active ? 1 : 0) << '\t' << e.retries << '\n';
   }
   std::fflush(stdout);
   std::_Exit(0);  // System.exit(0): skip tearing down the graph

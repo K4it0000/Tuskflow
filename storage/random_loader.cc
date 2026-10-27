@@ -39,15 +39,16 @@ std::vector<int32_t> load_random_graph(GraphStorage* storage, uint32_t nodes,
       from = (from + 1 == n) ? 0 : from + 1;
     }
   }
-  // initializeMappings(): identity shuffled with new Random(42L).
+  return shuffled_identity(n);  // initializeMappings()
+}
+
+std::vector<int32_t> shuffled_identity(uint32_t n) {
   std::vector<int32_t> mappings(n);
   for (uint32_t i = 0; i < n; ++i) mappings[i] = static_cast<int32_t>(i);
-  {
-    JavaRandom rnd(42);
-    for (int32_t i = static_cast<int32_t>(n) - 1; i > 0; --i) {
-      int32_t index = rnd.next_int(i + 1);
-      std::swap(mappings[index], mappings[i]);
-    }
+  JavaRandom rnd(42);
+  for (int32_t i = static_cast<int32_t>(n) - 1; i > 0; --i) {
+    int32_t index = rnd.next_int(i + 1);
+    std::swap(mappings[index], mappings[i]);
   }
   return mappings;
 }

@@ -3,6 +3,11 @@
 
 #include "config.hh"
 
+DEFINE_string(dataset, "random", "DATASET: random or ldbc.");
+DEFINE_string(ldbc_path, "",
+              "LDBC SNB datagen raw CSV directory (.../graphs/csv/raw/"
+              "composite-merged-fk), for --dataset=ldbc.  The LDBC workload is "
+              "USE_TRAVERSALS = true with the mammoth LDBC_QUERY_TYPE = 0.");
 DEFINE_uint64(nodes, 30000000, "RandomLoader NODES_SIZE.");
 DEFINE_uint64(rels, 100000000, "RandomLoader RELS_SIZE.");
 DEFINE_uint64(seed, 42, "Seed of the random graph (the original is unseeded; "

@@ -135,12 +135,16 @@ void QueryManager::change_execution_mode(Task* task, int epoch) {
 // scheduleLongRunningTask / scheduleSingleLongRunningTask.
 void QueryManager::schedule_long_running_task() {
   Task* lr = long_running_queries_.poll();
-  if (FLAGS_tag_optimization)
+  auto* lr_tx = static_cast<AllNodesLongRunningTx*>(lr->tx);
+  if (FLAGS_tag_optimization) {  // setupReservationTable
     table_->add_resource_updated(ResourceType::NODE);  // List.of(NODE)
+    if (const LdbcGraph* g = lr_tx->ldbc())  // List.of(messageIds)
+      table_->set_label_range(g->range_first[kPostType],
+                              g->range_last[kCommentType]);
+  }
   has_long_running_finished_.store(1);
   change_execution_mode(lr, epoch_.load());
-  static_cast<AllNodesLongRunningTx*>(lr->tx)->set_variable_for_completion(
-      &has_long_running_finished_);
+  lr_tx->set_variable_for_completion(&has_long_running_finished_);
   aborted_counter_.fetch_add(1);
   running_queries_.add(lr);
   lr_active_.store(true);
@@ -255,6 +259,7 @@ void QueryManager::reset_execution_mode() {
 void QueryManager::run_epoch() {
   double t0 = now_millis();
   std::atomic_thread_fence(std::memory_order_seq_cst);
+  int retries = aborted_counter_.load();
   int count = schedule_next_epoch();
   aborted_counter_.store(0);
   work_counter_.store(count);
@@ -277,7 +282,8 @@ void QueryManager::run_epoch() {
   if (count > 0) {
     phase_lat_[0].push_back(t1 - t0);
     phase_lat_[1].push_back(t2 - t1);
-    epoch_log_.push_back({epoch_.load(), t0, count, t1 - t0, t2 - t1, lr});
+    epoch_log_.push_back(
+        {epoch_.load(), t0, count, t1 - t0, t2 - t1, lr, retries});
   }
   epoch_.fetch_add(1);
 }

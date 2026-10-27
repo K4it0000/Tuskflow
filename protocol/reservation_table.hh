@@ -135,10 +135,13 @@ public:
     } else {
       conflict |= (epoch == entry.epoch) && (tid > entry.writeTid);
     }
-    // l.33-36.  Label indexes are only used by the LDBC mammoths; empty here,
-    // so every resource passes the label check (labelFound = true).
-    if (resources_updated_ == 0 ||
-        (resources_updated_ & (1u << static_cast<int>(type))) != 0) {
+    // l.33-36.  Label indexes (set only for the LDBC mammoth): as in the
+    // original, the check uses the id alone, whatever the resource type.
+    bool label_found = !has_label_range_ ||
+                       (label_first_ <= id && id <= label_last_);
+    if (label_found &&
+        (resources_updated_ == 0 ||
+         (resources_updated_ & (1u << static_cast<int>(type))) != 0)) {
       bool is_visited = entry.state == LongRunningState::VISITED &&
                         entry.writtenByLongRunning;
       bool is_pending = entry.state == LongRunningState::PENDING_WRITE ||
@@ -159,12 +162,19 @@ public:
       m.for_each([](int64_t, ReservationEntry* e) { delete e; });
       m.clear_exclusive();
     }
-    resources_updated_ = 0;
+    resources_updated_ = 0;  // the label indexes stay, as in the original
   }
 
   // setResourcesUpdated (USE_TAG_OPTIMIZATION).
   void add_resource_updated(ResourceType type) {
     resources_updated_ |= 1u << static_cast<int>(type);
+  }
+  // setLabelsUpdated (USE_TAG_OPTIMIZATION) with one index, the ids
+  // [first, last] (LdbcMetadata.messageIds).
+  void set_label_range(int64_t first, int64_t last) {
+    label_first_ = first;
+    label_last_ = last;
+    has_label_range_ = true;
   }
   void enable_reordering() { reordering_ = true; }
 
@@ -196,6 +206,8 @@ private:
   using Map = ConcurrentHashMap<int64_t, ReservationEntry*>;
   Map maps_[kResourceTypes];
   uint32_t resources_updated_ = 0;
+  bool has_label_range_ = false;
+  int64_t label_first_ = 0, label_last_ = -1;
   bool reordering_ = false;
 
   // map.merge(id, new ReservationEntry(...), (prev, curr) -> prev.merge(curr)).

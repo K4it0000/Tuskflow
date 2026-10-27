@@ -33,6 +33,7 @@ namespace tuskflow {
 // Property names written by the workload.
 inline const std::string kPropertyKey = "Property";        // the mammoth
 inline const std::string kNewPropertyKey = "New property"; // short writes
+inline const std::string kLikesKey = "Likes";              // LDBC Q0
 
 class Tx {
 public:
@@ -80,6 +81,7 @@ protected:
   Node* read_node(uint32_t node_id);
   Relationship* read_relationship(uint32_t rel_id);
   const IntList* read_out_neighbourhood(uint32_t node_id);
+  const IntList* read_in_neighbourhood(uint32_t node_id);
   Node* prepare_update_node(uint32_t node_id);
 
   // Replay of an aborted attempt (not in Algorithm 1; Java

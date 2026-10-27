@@ -30,6 +30,7 @@ struct EpochRecord {  // --epoch_log
   double phase1_ms;
   double phase2_ms;
   bool lr_active;
+  int retries;  // tasks carried over from the last epoch (abortedCounter)
 };
 
 class QueryManager {

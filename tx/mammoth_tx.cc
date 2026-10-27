@@ -27,6 +27,10 @@ void AllNodesLongRunningTx::run_locally() {
   const bool bd = FLAGS_lr_breakdown;
   uint64_t c_res = 0, c_get = 0, c_copy = 0, c_rest = 0;
   while (budget > 0 && node_id < number_of_nodes_) {
+    if (ldbc_ != nullptr && !ldbc_->is_message(static_cast<uint32_t>(node_id))) {
+      ++node_id;  // LdbcMetadata.messageIds.contains(nodeId)
+      continue;
+    }
     uint64_t t_0 = bd ? __rdtsc() : 0;
     protocol_->reserve_mammoth_write(write_set_, new_key(), ResourceType::NODE,
                                      static_cast<int64_t>(node_id),
@@ -43,7 +47,7 @@ void AllNodesLongRunningTx::run_locally() {
       ser_reads_.push_back({static_cast<uint32_t>(node_id), ver_read});
     uint64_t t_3 = bd ? __rdtsc() : 0;
     copies_.push_back(new_val);
-    new_val->add_property(kPropertyKey, static_cast<int64_t>(node_id));
+    new_val->add_property(*property_key_, static_cast<int64_t>(node_id));
     Protocol::update_last_write_set_entry(write_set_, nullptr, new_val);
     if (bd) {
       uint64_t t_4 = __rdtsc();

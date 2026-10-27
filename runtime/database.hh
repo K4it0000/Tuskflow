@@ -22,7 +22,9 @@ public:
       : storage_(storage), manager_(manager), locks_(locks), cfg_(cfg) {}
 
   // Database.submitQuery + CypherParser.parseRandom: a read (ReadTx), a write
-  // (MixedTx) or the mammoth (AllNodesLongRunningTx), created for 2PL.
+  // (MixedTx) or the mammoth (AllNodesLongRunningTx), created for 2PL.  For
+  // LDBC: FriendMessagesReadTx / FriendMessagesUpdateTx and
+  // AllMessagesLongRunningTx.
   void submit_query(bool is_read, bool long_running, ResultQueue* output);
 
 private:

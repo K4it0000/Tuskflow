@@ -15,9 +15,18 @@ void Database::submit_query(bool is_read, bool long_running, ResultQueue* output
   int task_id = last_tx_id_.fetch_add(1) + 1;
   Task* task = TaskPool::new_instance(task_id, long_running);
   if (long_running) {
-    task->tx = new AllNodesLongRunningTx(task_id, storage_, output,
-                                         cfg_.number_of_nodes,
-                                         FLAGS_lr_budget);
+    if (cfg_.ldbc != nullptr)  // LDBC_QUERY_TYPE = 0
+      task->tx = new AllMessagesLongRunningTx(task_id, storage_, output,
+                                              cfg_.ldbc, FLAGS_lr_budget);
+    else
+      task->tx = new AllNodesLongRunningTx(task_id, storage_, output,
+                                           cfg_.number_of_nodes,
+                                           FLAGS_lr_budget);
+  } else if (cfg_.ldbc != nullptr) {  // USE_TRAVERSALS = true
+    if (is_read)
+      task->tx = new FriendMessagesReadTx(task_id, storage_, output, cfg_);
+    else
+      task->tx = new FriendMessagesUpdateTx(task_id, storage_, output, cfg_);
   } else if (is_read) {
     task->tx = new ReadTx(task_id, storage_, output, cfg_);
   } else {

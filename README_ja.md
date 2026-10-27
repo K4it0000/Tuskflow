@@ -1,6 +1,56 @@
 # TuskFlow の C++ 実装
 
-TuskFlow 論文の Java プロトタイプ (以下「原典」) を、クラス単位で C++ に移したもの。乱数グラフのワークロードと、mammoth `AllNodesLongRunningTx` を対象にする。原典からの逸脱は、各ファイルのコメントに書いてある。
+TuskFlow 論文 (PVLDB 18(12)) の Java プロトタイプ (以下「原典」) を、クラス単位で C++ に移したもの。原典の動作を再現することを目的にしている。
+
+## 実装内容
+
+| 対象 | 内容 |
+|---|---|
+| ワークロード | 原典の乱数グラフと、LDBC SNB (datagen の raw 形式 CSV を読む) |
+| 短 tx | 乱数グラフ: `RandomNodeTraversal{Reads,Mixed}Tx`。LDBC: `RandomFriendMessages{Read,Update}Tx` (Person の in リストから辺を選び、hasCreator ならメッセージを読むか書く) |
+| mammoth | 乱数グラフ: `AllNodesLongRunningTx` (全頂点に書く)。LDBC: Q0 `AllMessagesLongRunningTx` (全メッセージに書く) |
+| epoch 方式 | 論文 Algorithm 1 (Phase 1 で予約、Phase 2 で判定と書き戻し)、reordering、tag 最適化、abort 後の再生 |
+| 2PL | mammoth が動いていない間の実行と、epoch 方式との切り替え。Neo4j 5.16.0 の Forseti ロックマネージャ |
+| クライアント | open-loop。100 クライアントが毎秒 100 tx ずつ投入する |
+| 計測 | スループット、レイテンシの分布、mammoth の長さ、Phase ごとの時間、abort 数、epoch ごとの記録 (`--epoch_log`) |
+| 正しさの検査 | `--ser_log` で記録し、`tuskflow_ser_check.exe` で衝突直列化可能かを調べる |
+
+**未実装**: LDBC の Q1・Q2、メッセージだけの短 tx (`USE_TRAVERSALS = false`)、mammoth の分割・並列実行、2PL での mammoth の実行。
+
+**原典との主な違い**: GC の代わりに明示的に解放する (他のスレッドが読みうるものは QSBR で回収する)。メモリ確保には mimalloc を使う。Java ではデータ競合になるノードのマージを、ノードごとのロックで守る。そのほかの違いは各ファイルのコメントに書いてある。原典の競合 2 つは比較のため既定で残しており、`--fix_getnext_race` と `--fix_mode_switch_race` で直せる。
+
+## 動かし方
+
+**必要なもの**: x86_64 の Linux、GCC 11 以降、CMake 3.14 以降、gflags (`apt install build-essential cmake git libgflags-dev`)。mimalloc は configure 時に取得するので、ネットワーク接続が要る。
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+TF=build  # 実行ファイルの場所
+
+# 乱数グラフ (動作確認)
+$TF/tuskflow.exe --nodes=100000 --rels=330000 --duration_ms=6000 --lr_delay_ms=2000
+
+# LDBC SNB (論文 §6.2 の条件: 1-hop、開始 Person は一様、読み取り 80%)
+$TF/tuskflow.exe --dataset=ldbc \
+  --ldbc_path=<datasets>/ldbc/sf3-raw/graphs/csv/raw/composite-merged-fk \
+  --hops=1 --use_zipf=false --read_ratio=80 --duration_ms=90000 --lr_delay_ms=60000
+
+# 正しさの検査
+$TF/tuskflow.exe --nodes=100000 --rels=330000 --duration_ms=6000 --lr_delay_ms=2000 --ser_log=ser.bin
+$TF/tuskflow_ser_check.exe ser.bin
+```
+
+| 規模 | 頂点 / 辺 | 最大メモリ |
+|---|---|---|
+| 乱数グラフ (動作確認) | 10 万 / 33 万 | 約 5 GB |
+| 乱数グラフ (1,000 万頂点) | 1,000 万 / 3,300 万 | 約 11 GB |
+| LDBC SF3 | 1,064 万 / 4,910 万 | 約 12 GB |
+| LDBC SF10 | 3,390 万 / 1 億 6,556 万 | 未計測 |
+
+- フラグを何も付けないと原典の既定値 (3,000 万頂点、150 秒) で動くので、規模は必ず指定する。全フラグと既定値は [config.cc](config.cc) にある。
+- 正しさの検査は、既定の設定では原典の競合のため `NO` になることがある。上の 2 つのフラグを付けると `yes` になる。tag 最適化を有効にすると、原典と同じく `NO` になる。
+- 「mammoth 中のスループット」は、最初の数 epoch の速さに左右される指標なので、比べるときは epoch ごとの commit 数も見る。
 
 ## 読む順番
 
@@ -38,6 +88,7 @@ TuskFlow 論文の Java プロトタイプ (以下「原典」) を、クラス�
 | [storage/entities.hh](storage/entities.hh) | `database.storage.entities.*` (`Node`、`PropertyMap`、`Property`、`LabelMap`、`Relationship`、`AtomicObjectArray`) |
 | [storage/graph_storage.hh](storage/graph_storage.hh) | `database.storage.GraphStorage`、`MetadataStore` |
 | [storage/random_loader.cc](storage/random_loader.cc) | `benchmarks.data.RandomLoader`、`BenchmarkUtils.populateDatabase` / `initializeMappings` |
+| [storage/ldbc_loader.cc](storage/ldbc_loader.cc) | `benchmarks.data.LdbcLoader`、`benchmarks.data.metadata.LdbcMetadata`、`BenchmarkUtils.populateDatabase` / `initializeMappings` の LDBC 部分 |
 | [protocol/reservation_table.hh](protocol/reservation_table.hh) | `runtime.dependencies.ReservationTableImpl`、`ReservationEntry`、`LongRunningState`、`ReservationState` |
 | [protocol/protocol.hh](protocol/protocol.hh) | `tasks.protocol.ConcurrencyProtocol`、`utils.RWKey` |
 | [protocol/reservation_protocol.hh](protocol/reservation_protocol.hh) | `tasks.protocol.NoLocksWithReservationImpl` |
@@ -45,8 +96,8 @@ TuskFlow 論文の Java プロトタイプ (以下「原典」) を、クラス�
 | [protocol/forseti.hh](protocol/forseti.hh) | Neo4j 5.16.0 の `ForsetiLockManager` / `ForsetiClient` / `SharedLock` / `ExclusiveLock` (jar のバイトコードから移植) |
 | [tx/task.hh](tx/task.hh) | `tasks.Task`、`TaskPool`、`TransactionType`、`database.Result` |
 | [tx/transaction.hh](tx/transaction.hh) | `tasks.AbstractTransaction` |
-| [tx/short_tx.hh](tx/short_tx.hh) | `tasks.storedprocedures.RandomNodeTraversalReadsTx` / `RandomNodeTraversalMixedTx` |
-| [tx/mammoth_tx.hh](tx/mammoth_tx.hh) | `tasks.storedprocedures.AllNodesLongRunningTx`、`tasks.AbstractLongRunningTransaction` |
+| [tx/short_tx.hh](tx/short_tx.hh) | `tasks.storedprocedures.RandomNodeTraversalReadsTx` / `RandomNodeTraversalMixedTx`、`tasks.storedprocedures.ldbc.RandomFriendMessagesReadTx` / `RandomFriendMessagesUpdateTx` |
+| [tx/mammoth_tx.hh](tx/mammoth_tx.hh) | `tasks.storedprocedures.AllNodesLongRunningTx`、`tasks.storedprocedures.ldbc.AllMessagesLongRunningTx`、`tasks.AbstractLongRunningTransaction` |
 | [runtime/query_manager.hh](runtime/query_manager.hh) | `runtime.LongRunningQueryManager` |
 | [runtime/worker.cc](runtime/worker.cc) | `runtime.Worker` |
 | [runtime/database.hh](runtime/database.hh) | `database.Database`、`database.CypherParser.parseRandom`、`benchmarks.workers.applicationclients.PrototypeClient` / `PrototypeLongRunningClient` |
@@ -55,16 +106,3 @@ TuskFlow 論文の Java プロトタイプ (以下「原典」) を、クラス�
 | [monitor/ser_log.hh](monitor/ser_log.hh) | (原典にない) 正しさの検証用の記録 `--ser_log` |
 | [util/](util/) | JDK の代わり: `ConcurrentHashMap` (`chm.hh`)、GC の代わり (`qsbr.hh`)、`ConcurrentLinkedQueue` / `CountDownLatch` / `java.util.Random` (`concurrency.hh`)、`ThreadLocalRandom` (`thread_random.hh`、`random.hh`)、commons-math の `ZipfDistribution` (`zipf.hh`)、メモリ確保 (`mimalloc_new.cc`) |
 | [tools/](tools/) | 正しさの検査 (`ser_check.cc`、`--ser_log` の記録を読む) |
-
-## ビルドと実行
-
-必要なもの: x86_64 の Linux、GCC 11 以降 (C++20)、CMake 3.14 以降、gflags (Ubuntu なら `apt install build-essential cmake git libgflags-dev`)。mimalloc は configure 時に GitHub から取得するので、ネットワーク接続も要る。
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-build/tuskflow.exe --nodes=10000000 --rels=33000000 \
-  --duration_ms=60000 --lr_delay_ms=20000 --read_ratio=80
-```
-
-フラグの一覧と既定値は [config.cc](config.cc)。既定値は原典の `DBConfig` と同じ (tag 最適化だけ無効)。
